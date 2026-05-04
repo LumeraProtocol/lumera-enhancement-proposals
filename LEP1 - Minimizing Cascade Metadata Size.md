@@ -1,0 +1,175 @@
+# 📄 Minimizing Cascade Metadata Size
+
+## 1 - Executive Brief
+
+### What is the problem?
+
+- Every file stored with **Cascade** is split into thousands of 64 KB *symbols*.
+- A *layout file* records **all** symbol IDs.
+- Action Module stores
+    - A. the *layout file* content
+    - B. the IDs of the *layout file*s
+- The B is required to find and recreate an original file, this is send to Action module by the SuperNodes
+- The A is required to validate the IDs sent by the SuperNodes
+- PROBLEM: Large uploads → huge layout files → large on‑chain “tickets”.
+    
+    * Bigger tickets mean:
+    
+    - Higher gas fees for users
+    - Slower TX confirmation & poorer UX
+    - Marketing claim of “lightweight storage” no longer true
+
+### The solution – **Layout Index Files**
+
+- Instead of pushing the entire layout on‑chain, we push **one tiny index**.
+- The index holds **50 IDs** that point to the real layout files (which stay in the P2P storage mesh).
+- Security stays the same because:
+    - The index is still signed by the uploader.
+    - The chain still checks that SuperNodes return the correct IDs.
+
+### Why this matters
+
+| Before | After |
+| --- | --- |
+| 10–50 MB on‑chain for very large uploads | **< 50 KB** (constant) |
+| Gas spikes & user complaints | Predictable fees, better UX |
+| Harder to scale marketing push for large‑file verticals | “Enterprise‑ready” storage story |
+
+**Bottom line:** We cut on‑chain bloat by ~100× without touching the user flow or security guarantees.
+
+---
+
+## 2 - SuperNode Change Design (Technical‑High‑Level)
+
+### 2.1 New Artifacts
+
+| Artifact | Purpose | Stored Where |
+| --- | --- | --- |
+| **Symbol files** | 64 KB RaptorQ chunks | Kademlia mesh |
+| **Layout file** | Lists all symbols for one block | Kademlia mesh |
+| **Layout index file 🆕** | Lists up to 50 layout‑file IDs | Kademlia mesh & referenced on‑chain |
+|  |  |  |
+
+### 2.2 Workflow Changes
+
+Agenda: ✅ - no changes; **🆕 - new logic/code**
+
+1. **Encoding phase** (unchanged)
+    - RQ‑lib processes file, creates symbol files and per‑block layout files.
+2. **User side**
+    - ✅ Get layout file from RQ-lib
+    - ✅ **Signs** `layout_file`
+        - `layout_ignature = Sign(Base64(layout_file))`
+    - **🆕 Calculate 50 IDs of layout files using `rq_ids` and `rq_ids_max`**
+        - `ID = Base58(BLAKE3(zstd(Base64(layout_file).layout_signature.counter)))`
+    - **🆕 Create `index_file` structure**:
+        
+        ```json
+        {
+          "version": 1,
+          "layout_ids": ["<layout_id_1>", … "<layout_id_n>"],
+          "layout_signature": "layout_signature"
+        }
+        
+        ```
+        
+    - **🆕** Signs **`index_file`**:
+        - `creators_ignature = Sign(Base64(**index_file)**)`
+    - Create and send `RegisterAction` message where Metadata now is :
+        
+        ```json
+        {  
+            "data_hash": "Hash of input data"  
+            "fileName": "Input file name"  
+            "rq_ids_ic": random number  
+            "rq_ids_signature": string  - Base64(**index_file**).creators_signature
+        }
+        ```
+        
+3. Action module - `RegisterAction` (unchanged)
+    - ✅ Verifies signature:
+        - `Verify(Base64(**index_file),** creators_ignature))`
+4. **SuperNode**
+    - ✅ Get symbols and **`index_file`** from RQ-lib
+    - ✅ Get the Action object from Action module
+    - ✅ Get `rq_ids_signature` from the Action object
+    - **🆕 Get** `layout_signature` from `rq_ids_signature` :
+        - split it into `Base64(**index_file**)` and `creators_signature`
+        - decode `Base64(**layout_index**)`
+    - ✅ **Verify** `layout_file`
+        - `Verify(Base64(**layout_file),** layout_signature)`
+    - **🆕 Create 50 replicas of** `layout_file`:
+        - `layout_file1..50 = zstd(Base64(layout_file).layout_signature.counter)`
+        - where `counter = rq_ids_ic…rq_ids_max`
+    - **🆕 Validate** `layout_id`’s from the `index_file` :
+        - Create 50 `layout_file_id`’s: `ID1..50 = Base58(BLAKE3(layout_file1..50))`
+        - Compare with IDs from the `index_file`
+    - **🆕 Create 50 replicas of** `index_file`:
+        - `index_file1..N = zstd(Base64(index_file).creators_signature.counter)`
+        - where `counter = rq_ids_ic…rq_ids_max`
+        - and `Base64(index_file).creators_signature` is `rq_ids_signature` from the Action object
+    - **🆕 Create 50** `index_file`’s IDs: `index_id1..50 = Base58(BLAKE3(index_file1..50))`
+    - ✅ Stores symbols into Kademlia
+    - ✅ Stores 50 copies of `layout_file` into Kademlia
+    - **🆕** Stores 50 copies of `index_file` into Kademlia
+    - **🆕** Create and Send **`FinalizeAction` message**
+        
+        ```json
+        {
+          "rq_ids_ids": ["<index_id_1>", …],
+          "rq_ids_oti": <unchanged>
+        }
+        
+        ```
+        
+5. Action module - **`FinalizeAction`** (unchanged)
+    - ✅ Verify random ID:
+        - if `index_id_N == Base58(BLAKE3(zstd(rq_ids_signature.counterN)))`
+
+### 2.3 Backward Compatibility
+
+- Not needed
+
+---
+
+## 3 - Architecture Diagrams
+
+### 3.1 Current Indirection (v0)
+
+```mermaid
+flowchart TD
+    F@{ shape: lean-r, label: "User File"} --> R@{ shape: subproc, label: "RaptorQ Encode"}
+    R --> S@{ shape: docs, label: "**Symbol** Files<br/>≈ 64 KB each"}
+    R --> L@{ shape: docs, label: "**Layout** Files (50 replicas)<br/>Lists *all* symbol IDs"}
+
+    %% storage
+    S -. stored .-> KAD@{ shape: cyl, label: "Kademlia DHT" }
+    L  -. stored  .-> KAD
+
+    %% on-chain metadata
+    L -. on-chain .-> CHAIN[Action Module State stores<br/>* **layout** file content<br/>* users signature over it<br/>* IDs of all 50 **layout** fles]
+
+```
+
+**3.2 Proposed Indirection (v1 – Layout Index)**
+
+```mermaid
+flowchart TD
+    F@{ shape: lean-r, label: "User File"} --> R@{ shape: subproc, label: "RaptorQ Encode"}
+    R --> S@{ shape: docs, label: "**Symbol** Files<br/>≈ 64 KB each"}
+    R --> L@{ shape: docs, label: "**Layout** Files (50 replicas)<br/>Lists *all* symbol IDs"}
+    L --> I@{ shape: docs, label: "**Index** Files (50 replicas)<br/>Lists IDs of *50* Layout Files"}
+
+    %% storage
+    S -. stored .-> KAD@{ shape: cyl, label: "Kademlia DHT" }
+    L  -. stored  .-> KAD
+    I  -. stored  .-> KAD
+
+    %% on-chain metadata
+    I -. on-chain .-> CHAIN[Action Module stores<br/>* **index** file content<br/>* users signature over it<br/>* IDs of all 50 **index** fles]
+
+```
+
+### Sequence diagram
+
+![image.png](attachment:f81d6b25-483d-4286-91ae-61b73df153cb:image.png)
