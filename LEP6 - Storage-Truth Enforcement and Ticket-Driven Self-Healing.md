@@ -1,9 +1,13 @@
-# LEP6 - Storage-Truth Enforcement and Ticket-Driven Self-Healing
+# LEP-6 - Storage-Truth Enforcement and Ticket-Driven Self-Healing
 
 - **Status:** Approved
 - **Author**: Lumera Protocol Team
 - **Type:** Protocol / Audit / Supernode
 - **Created:** 2026-04-02
+
+> This is the protocol proposal. The repository implementation record is
+> [LEP-6 Lumera Implementation Guide](LEP-6-implementation-guide.md), which
+> captures implementation-stage details, hardening, and review remediation.
 
 ---
 

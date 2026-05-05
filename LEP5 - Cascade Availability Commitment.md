@@ -1,9 +1,14 @@
 # LEP-5 — Cascade Availability Commitment (Merkle Proof Challenge)
 
-* Status: Approved
-* Author: Lumera Protocol Team
-* Created: 2025-02-08
-* Requires: LEP1 (Minimizing Cascade Metadata Size)
+## Status: Implemented
+## Author: Lumera Protocol Team
+## Created: 2025-02-08
+## Requires: LEP1 (Minimizing Cascade Metadata Size)
+
+> This file is the canonical LEP-5 specification for the `lumera` implementation.
+> It incorporates implementation-stage drift from the original proposal, including
+> BLAKE3 hashing, client-provided `challenge_indices`, and per-level odd-node
+> duplication in the Merkle tree.
 
 ---
 
@@ -14,13 +19,11 @@
 The current Cascade protocol has a critical vulnerability: **a malicious SuperNode can finalize actions and claim fees without ever receiving or storing the actual file data.**
 
 This attack is possible because:
-
 - All information needed to compute valid `rq_ids_ids` is available on-chain (creator's signature + counter)
 - The verification formula uses only on-chain metadata
 - No proof of actual file possession is required at finalization
 
 **Impact:**
-
 - Users pay fees but data is never stored
 - Network storage guarantees are undermined
 - Malicious operators can extract value without providing service
@@ -30,12 +33,13 @@ This attack is possible because:
 Introduce an **Availability Commitment** system that requires the finalizing SuperNode to prove possession of actual file data:
 
 1. **Merkle Root Commitment:** At registration, the client computes a Merkle root over fixed-size chunks of the uploaded file and includes it on-chain.
+
 2. **Challenge-Response Proofs:** At registration, the client also commits a set of challenge indices. At finalization, the SuperNode must produce valid Merkle proofs for those challenged chunks — which is only possible if the SuperNode actually has the file.
 
 **Key Properties:**
 
 | Property | Guarantee |
-| --- | --- |
+|----------|-----------|
 | Commitment Binding | Client commits to all file chunks at registration time |
 | Challenge Commitment | Client commits challenge indices upfront; SuperNode must prove possession of those exact chunks |
 | Proof Compactness | O(log N) proof size per challenged chunk |
@@ -91,7 +95,7 @@ The Merkle tree is built over **fixed-size chunks of the original file**, not Ra
 ### 2.3 Why Current Verification Fails
 
 | What's Verified | What's NOT Verified |
-| --- | --- |
+|-----------------|---------------------|
 | ID formula correctness | Actual file receipt |
 | SuperNode authorization | Symbol computation |
 | Signature validity | Data storage in Kademlia |
@@ -128,14 +132,14 @@ The Merkle tree is built over **fixed-size chunks of the original file**, not Ra
 
 ### 4.1 Merkle Tree Construction
 
-### 4.1.1 Chunking
+#### 4.1.1 Chunking
 
 Let file bytes be `B` of length `N`. Let chunk size be `S`.
 
 **Hard boundaries enforced by the chain:**
 
 | Rule | Value | Enforcement |
-| --- | --- | --- |
+|------|-------|-------------|
 | Minimum file size | 4 bytes | `total_size >= 4` — reject trivially tiny files |
 | Maximum chunk size | 256 KiB (262,144) | `chunk_size <= 262144` |
 | Minimum chunk size | 1 byte | `chunk_size >= 1` |
@@ -144,7 +148,6 @@ Let file bytes be `B` of length `N`. Let chunk size be `S`.
 | Maximum challenge indices | 8 | `num_indices = min(svc_challenge_count, num_chunks)` — capped by `svc_challenge_count` (default 8) |
 
 **Chunk size rules:**
-
 - `S` must be a power of 2
 - `S` must be in `[1, 262144]` (1 byte floor, 256 KiB ceiling)
 - Default: `S = 262144` (256 KiB) for files ≥ 1 MiB
@@ -152,7 +155,6 @@ Let file bytes be `B` of length `N`. Let chunk size be `S`.
 - The minimum chunk count is enforced **unconditionally** — all files with an AvailabilityCommitment must produce ≥ 4 chunks
 
 **Client chunk size selection algorithm:**
-
 ```
 S = 262144
 while ceil(N / S) < svc_min_chunks_for_challenge AND S > 1:
@@ -167,17 +169,17 @@ The last chunk may be smaller than `S`.
 **Examples:**
 
 | File Size | Chunk Size | Chunks | Indices | Accepted? |
-| --- | --- | --- | --- | --- |
-| 2 MiB | 256 KiB | 8 | 8 | ✓ (8 chunks, 8 indices) |
-| 1 MiB | 256 KiB | 4 | 4 | ✓ (4 chunks, 4 indices) |
-| 500 KiB | 128 KiB | 4 | 4 | ✓ (4 chunks, 4 indices) |
-| 100 KiB | 32 KiB | 4 | 4 | ✓ (4 chunks, 4 indices) |
-| 4 KiB | 1 KiB | 4 | 4 | ✓ (4 chunks, 4 indices) |
-| 4 bytes | 1 byte | 4 | 4 | ✓ (4 chunks, 4 indices) |
-| 3 bytes | — | — | — | ✗ (below min file size of 4 bytes) |
-| 500 KiB | 256 KiB | 2 | — | ✗ (only 2 chunks < min 4) |
+|-----------|-----------|--------|---------|-----------|
+| 2 MiB     | 256 KiB   | 8      | 8       | ✓ (8 chunks, 8 indices) |
+| 1 MiB     | 256 KiB   | 4      | 4       | ✓ (4 chunks, 4 indices) |
+| 500 KiB   | 128 KiB   | 4      | 4       | ✓ (4 chunks, 4 indices) |
+| 100 KiB   | 32 KiB    | 4      | 4       | ✓ (4 chunks, 4 indices) |
+| 4 KiB     | 1 KiB     | 4      | 4       | ✓ (4 chunks, 4 indices) |
+| 4 bytes   | 1 byte    | 4      | 4       | ✓ (4 chunks, 4 indices) |
+| 3 bytes   | —         | —      | —       | ✗ (below min file size of 4 bytes) |
+| 500 KiB   | 256 KiB   | 2      | —       | ✗ (only 2 chunks < min 4) |
 
-### 4.1.2 Leaf Hashing (Domain Separated)
+#### 4.1.2 Leaf Hashing (Domain Separated)
 
 To prevent second-preimage attacks, leaves and internal nodes use different domain prefixes:
 
@@ -187,7 +189,7 @@ leaf_i = BLAKE3(0x00 || uint32be(i) || chunk_i)
 
 Where `uint32be(i)` is the chunk index as 4 bytes big-endian.
 
-### 4.1.3 Internal Node Hashing (Domain Separated)
+#### 4.1.3 Internal Node Hashing (Domain Separated)
 
 ```
 parent = BLAKE3(0x01 || left_hash || right_hash)
@@ -195,7 +197,7 @@ parent = BLAKE3(0x01 || left_hash || right_hash)
 
 If a level has an odd number of nodes, duplicate the last node (`right = left`).
 
-### 4.1.4 Tree Structure
+#### 4.1.4 Tree Structure
 
 ```
                          ┌─────────────────┐
@@ -219,7 +221,7 @@ If a level has an odd number of nodes, duplicate the last node (`right = left`).
      (256 KiB)          (256 KiB) (256 KiB)         (≤256 KiB)
 ```
 
-### 4.1.5 Merkle Proof Structure
+#### 4.1.5 Merkle Proof Structure
 
 To prove chunk `i` belongs to the tree, provide sibling hashes along the path from leaf to root:
 
@@ -245,7 +247,7 @@ To prove chunk `i` belongs to the tree, provide sibling hashes along the path fr
 
 ### 4.2 Protocol Changes
 
-### 4.2.1 On-Chain Commitment: `AvailabilityCommitment`
+#### 4.2.1 On-Chain Commitment: `AvailabilityCommitment`
 
 Added to CascadeMetadata at registration:
 
@@ -267,7 +269,7 @@ message AvailabilityCommitment {
 }
 ```
 
-### 4.2.2 Extended CascadeMetadata
+#### 4.2.2 Extended CascadeMetadata
 
 ```protobuf
 message CascadeMetadata {
@@ -301,7 +303,7 @@ message ChunkProof {
 }
 ```
 
-### 4.2.3 Module Parameters
+#### 4.2.3 Module Parameters
 
 ```protobuf
 message Params {
@@ -316,7 +318,7 @@ message Params {
 **Chunk size protocol constants** (not governance-tunable):
 
 | Constant | Value | Purpose |
-| --- | --- | --- |
+|----------|-------|---------|
 | `cascadeCommitmentMaxChunkSize` | 262,144 (256 KiB) | Maximum allowed chunk size |
 | `cascadeCommitmentMinChunkSize` | 1 (1 byte) | Minimum allowed chunk size |
 | `cascadeCommitmentMinTotalSize` | 4 | Minimum file size in bytes (reject trivially tiny files) |
@@ -326,7 +328,6 @@ The client's `chunk_size` must be a power of 2 within this range. The chain **un
 ### 4.3 Challenge Index Generation
 
 Challenge indices are **generated by the client at registration time** and stored in the `AvailabilityCommitment.challenge_indices` field. The indices must be:
-
 - **Deterministic:** Generated via BLAKE3-based derivation from known inputs
 - **Unique:** No duplicate indices in a single challenge set
 - **Within range:** All indices in `[0, num_chunks)`
@@ -352,7 +353,7 @@ The keeper does **not** re-derive indices. At finalization, it reads `commitment
 
 ### 4.4 Updated Protocol Flows
 
-### 4.4.1 Registration Phase (Client)
+#### 4.4.1 Registration Phase (Client)
 
 ```
   CLIENT REGISTRATION:
@@ -380,7 +381,7 @@ The keeper does **not** re-derive indices. At finalization, it reads `commitment
 
 **JS SDK addition:**
 
-```jsx
+```javascript
 import { blake3 } from 'blake3';  // or equivalent BLAKE3 npm package
 
 async function computeCommitment(fileBlob, chunkSize = 262144) {
@@ -415,7 +416,7 @@ async function computeCommitment(fileBlob, chunkSize = 262144) {
 }
 ```
 
-### 4.4.2 Finalization Phase (SuperNode)
+#### 4.4.2 Finalization Phase (SuperNode)
 
 ```
   SUPERNODE FINALIZATION:
@@ -436,7 +437,7 @@ async function computeCommitment(fileBlob, chunkSize = 262144) {
       - NEW: chunk_proofs array
 ```
 
-### 4.4.3 Verification Phase (Action Module)
+#### 4.4.3 Verification Phase (Action Module)
 
 ```
   ACTION MODULE — On receiving MsgFinalizeAction:
@@ -538,12 +539,12 @@ With m challenges drawn uniformly from N chunks, and an attacker storing fractio
 P(evade detection) = p^m
 ```
 
-| Chunks Stored | p | P(evade) m=5 | P(evade) m=8 | P(evade) m=16 |
-| --- | --- | --- | --- | --- |
-| 90% | 0.9 | 59.0% | 43.0% | 18.5% |
-| 80% | 0.8 | 32.8% | 16.8% | 2.8% |
-| 50% | 0.5 | 3.1% | 0.39% | 0.0015% |
-| 20% | 0.2 | 0.032% | negligible | negligible |
+| Chunks Stored | p   | P(evade) m=5 | P(evade) m=8 | P(evade) m=16 |
+|---------------|-----|-------------|-------------|--------------|
+| 90%           | 0.9 | 59.0%       | 43.0%       | 18.5%        |
+| 80%           | 0.8 | 32.8%       | 16.8%       | 2.8%         |
+| 50%           | 0.5 | 3.1%        | 0.39%       | 0.0015%      |
+| 20%           | 0.2 | 0.032%      | negligible  | negligible   |
 
 With m=8 (recommended default), storing less than half the file has <0.4% chance of evading a single challenge round. Failed attempts accumulate Audit module evidence.
 
@@ -551,7 +552,7 @@ With m=8 (recommended default), storing less than half the file has <0.4% chance
 
 **Risk:** A malicious client could collude with a SuperNode to choose "easy" challenge indices (e.g., indices for chunks the SuperNode already has from a partial transfer).
 
-**Defense:** The governance-enforced `svc_challenge_count` (m) ensures a minimum number of challenged chunks. The indices must be unique and within `[0, num_chunks)`. Since the client's goal is to have its data stored, collusion against its own interest is economically irrational. A future enhancement could mix server-side randomness into the index generation to further harden against this vector.
+**Defense:** The protocol-enforced `svc_challenge_count` (m) ensures a minimum number of challenged chunks. The indices must be unique and within `[0, num_chunks)`. Since the client's goal is to have its data stored, collusion against its own interest is economically irrational. A future enhancement could mix server-side randomness into the index generation to further harden against this vector.
 
 ### 5.5 Attack: Merkle Root Forgery (Collision)
 
@@ -560,11 +561,11 @@ With m=8 (recommended default), storing less than half the file has <0.4% chance
 ### 5.6 Security Summary
 
 | Guarantee | Mechanism | Strength |
-| --- | --- | --- |
+|-----------|-----------|----------|
 | **Commitment Binding** | BLAKE3 collision resistance | 2^128 security |
 | **Challenge Commitment** | Indices stored on-chain at registration | Immutable once committed |
 | **Proof Soundness** | Merkle tree structure | Information-theoretic |
-| **Collusion Resistance** | Client incentive alignment + governance minimum m | Economic (client pays for storage) |
+| **Collusion Resistance** | Client incentive alignment + protocol minimum m | Economic (client pays for storage) |
 
 ---
 
@@ -616,22 +617,15 @@ func HashInternal(left, right [HashSize]byte) [HashSize]byte {
     return result
 }
 
-func nextPowerOf2(n int) int {
-    v := 1
-    for v < n {
-        v <<= 1
-    }
-    return v
-}
-
 type Tree struct {
     Root      [HashSize]byte
     Leaves    [][HashSize]byte
-    Levels    [][][HashSize]byte // levels[0] = leaves, levels[last] = [root]
+    Levels    [][][HashSize]byte // levels[0] = leaves (possibly padded), levels[last] = [root]
     LeafCount int
 }
 
-// BuildTree constructs a Merkle tree from chunk data
+// BuildTree constructs a Merkle tree from chunk data.
+// If a level has an odd number of nodes, the last node is duplicated.
 func BuildTree(chunks [][]byte) (*Tree, error) {
     n := len(chunks)
     if n == 0 {
@@ -644,18 +638,17 @@ func BuildTree(chunks [][]byte) (*Tree, error) {
         leaves[i] = HashLeaf(uint32(i), chunk)
     }
 
-    // Pad to next power of 2
-    padded := make([][HashSize]byte, nextPowerOf2(n))
-    copy(padded, leaves)
-    for i := n; i < len(padded); i++ {
-        padded[i] = padded[n-1] // duplicate last
-    }
-
-    levels := [][][HashSize]byte{padded}
+    levels := [][][HashSize]byte{leaves}
 
     // Build tree bottom-up
-    current := padded
+    current := leaves
     for len(current) > 1 {
+        // If odd number of nodes, duplicate the last node
+        if len(current)%2 != 0 {
+            current = append(current, current[len(current)-1])
+            levels[len(levels)-1] = current
+        }
+
         next := make([][HashSize]byte, len(current)/2)
         for i := 0; i < len(current); i += 2 {
             next[i/2] = HashInternal(current[i], current[i+1])
@@ -870,7 +863,7 @@ func (k Keeper) VerifyChunkProofs(
 **Registration message increase:**
 
 | Field | Size |
-| --- | --- |
+|-------|------|
 | commitment_type | ~24 bytes |
 | hash_algo | 1 byte (enum varint) |
 | chunk_size | 4 bytes |
@@ -883,7 +876,7 @@ func (k Keeper) VerifyChunkProofs(
 **Finalization message increase (per proof):**
 
 | Field | Size |
-| --- | --- |
+|-------|------|
 | chunk_index | 4 bytes |
 | leaf_hash | 32 bytes |
 | path_hashes | ~320 bytes (10 levels for ~1000 chunks) |
@@ -893,8 +886,8 @@ func (k Keeper) VerifyChunkProofs(
 
 **Comparison:**
 
-|  | Current | With LEP-5 (m=8) |
-| --- | --- | --- |
+| | Current | With LEP-5 (m=8) |
+|---|---------|------------------|
 | Registration | ~2,500 bytes | ~2,605 bytes (+4%) |
 | Finalization | ~2,500 bytes | ~5,428 bytes (+117%) |
 | **Trade-off** | No data integrity proof | Full protection against fake storage |
@@ -902,7 +895,7 @@ func (k Keeper) VerifyChunkProofs(
 **Gas costs:**
 
 | Operation | Estimated Gas |
-| --- | --- |
+|-----------|--------------|
 | Commitment storage | ~25,000 |
 | Per-proof verification | ~15,000 |
 | **Total finalization overhead (m=8)** | **~145,000** |
@@ -913,41 +906,38 @@ func (k Keeper) VerifyChunkProofs(
 
 ### 7.1 Upgrade Strategy
 
-**Phase 1: Soft Launch** (activation height to activation + ~50,000 blocks)
+The implemented `lumera` upgrade persists the LEP-5 SVC parameter defaults at
+chain upgrade time. `AvailabilityCommitment` remains backward compatible:
 
-- SVC fields accepted but not required
-- SuperNodes and clients upgraded to support SVC
-- Monitoring for issues, parameter tuning
-
-**Phase 2: Enforcement** (after soft launch period)
-
-- SVC required for all new Cascade actions
-- Actions without `AvailabilityCommitment` rejected
-- Full protection enabled
+- Pre-LEP-5 actions without commitments continue to finalize through existing rules.
+- New Cascade actions may include `AvailabilityCommitment`; when present, it is validated at registration.
+- Finalization verifies `chunk_proofs` only for actions that stored a commitment with `challenge_indices`.
+- SVC params are protocol defaults (`svc_challenge_count=8`, `svc_min_chunks_for_challenge=4`) with proto fields retained for future flexibility.
 
 ### 7.2 Activation
 
-Add chain parameter: `lep5_enabled_height`
-
-- Before activation: existing finalization rules apply
-- After activation: `MsgRequestAction` for Cascade must include `AvailabilityCommitment` (with `challenge_indices`); `MsgFinalizeAction` must include valid `chunk_proofs`
+No `lep5_enabled_height` parameter exists in the implementation. Activation is
+the chain upgrade that introduces the new protobuf fields, default params, and
+verification path. Enforcement is commitment-scoped: actions with commitments
+must finalize with valid proofs; actions without commitments remain
+backward-compatible.
 
 ### 7.3 Backward Compatibility
 
 | Component | Impact | Migration |
-| --- | --- | --- |
+|-----------|--------|-----------|
 | Existing finalized actions | None | Already complete |
 | SuperNode software | Must upgrade | Proof generation in finalize path |
 | Client JS SDK | Must upgrade | Add `computeCommitment()` + challenge index generation |
 | rq-library (WASM) | **No changes** | Chunk commitment is pre-RQ |
-| Action Module | New validation | Chain upgrade required |
+| Action Module | Commitment-scoped validation | Chain upgrade required |
 
 ---
 
 ## 8. Recommended Parameters
 
 | Parameter | Mainnet | Testnet | Rationale |
-| --- | --- | --- | --- |
+|-----------|---------|---------|-----------|
 | `total_size` (min) | 4 bytes | 4 bytes | Reject trivially tiny files |
 | `chunk_size` (max) | 262,144 (256 KiB) | 262,144 | Default for large files |
 | `chunk_size` (min) | 1 (1 byte) | 1 | Floor; allows small files to have enough chunks |
@@ -1064,15 +1054,15 @@ Verification (BLAKE3):
 ## Changelog
 
 | Version | Date | Changes |
-| --- | --- | --- |
+|---------|------|---------|
 | 0.1 | 2025-02-08 | Initial drafts (two separate proposals) |
 | 0.2 | 2026-02-08 | Combined proposal: chunk-based commitment, single-SN Merkle proof finalization |
 | 0.3 | 2026-02-08 | Removed quorum/attestation layer; finalization relies solely on SuperNode-produced Merkle proofs |
 | 0.4 | 2026-02-26 | BLAKE3 replaces SHA-256 for all hashing; hash_algo changed to HashAlgo enum; challenge indices now client-provided at registration (stored in AvailabilityCommitment.challenge_indices) instead of derived from block hash at finalization |
-| 0.5 | 2026-02-26 | Variable chunk_size: chunk_size is now client-chosen power-of-2 in [1024, 262144]; chain enforces num_chunks >= svc_min_chunks_for_challenge for files >= 4 KiB, reducing SVC skip threshold from < 1 MiB to < 4 KiB |
+| 0.5 | 2026-02-26 | Variable chunk_size: chunk_size is now client-chosen power-of-2 in [1, 262144]; chain enforces num_chunks >= svc_min_chunks_for_challenge for files >= 4 bytes, reducing SVC skip threshold from < 1 MiB to < 4 bytes |
 | 0.6 | 2026-02-27 | Strict chunking boundaries: min file size 4 bytes; unconditional min 4 chunks; min 4 / max 8 challenge indices; max chunk size 256 KiB |
 | 0.7 | 2026-02-27 | Min chunk size lowered from 1 KiB to 1 byte to allow 4-byte files to produce 4 chunks with chunk_size=1 |
 
 ---
 
-**Document Status:** Draft — Pending Review
+**Document Status:** Implemented — synced to current `lumera` code and BRIDGE docs
